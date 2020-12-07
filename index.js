@@ -10,7 +10,7 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 
 // respond to requests on `/api/users`
-app.get('/api/users', (req, res) => {
+app.get('/api/user', (req, res) => {
   // send an SQL query to get all users
   connection.query('SELECT * FROM user', (err, results) => {
     if (err) {
@@ -35,16 +35,16 @@ const userValidationMiddlewares = [
   check('name').isLength({ min: 2 }),
 ];
 
-app.post(
-  '/api/users',
-  userValidationMiddlewares,
-  (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(422).json({ errors: errors.array() });
-    }
-    // send an SQL query to get all users
-    return connection.query('INSERT INTO user SET ?', req.body, (err, results) => {
+app.post('/api/user', userValidationMiddlewares, (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(422).json({ errors: errors.array() });
+  }
+  // send an SQL query to get all users
+  return connection.query(
+    'INSERT INTO user SET ?',
+    req.body,
+    (err, results) => {
       if (err) {
         // If an error has occurred, then the client is informed of the error
         return res.status(500).json({
@@ -53,31 +53,68 @@ app.post(
         });
       }
       // We use the insertId attribute of results to build the WHERE clause
-      return connection.query('SELECT * FROM user WHERE id = ?', results.insertId, (err2, records) => {
-        if (err2) {
-          return res.status(500).json({
-            error: err2.message,
-            sql: err2.sql,
-          });
+      return connection.query(
+        'SELECT * FROM user WHERE id = ?',
+        results.insertId,
+        (err2, records) => {
+          if (err2) {
+            return res.status(500).json({
+              error: err2.message,
+              sql: err2.sql,
+            });
+          }
+          // If all went well, records is an array, from which we use the 1st item
+          const insertedUser = records[0];
+          // Extract all the fields *but* password as a new object (user)
+          const { password, ...user } = insertedUser;
+          // Get the host + port (localhost:3000) from the request headers
+          const host = req.get('host');
+          // Compute the full location, e.g. http://localhost:3000/api/users/132
+          // This will help the client know where the new resource can be found!
+          const location = `http://${host}${req.url}/${user.id}`;
+          return res.status(201).set('Location', location).json(user);
         }
-        // If all went well, records is an array, from which we use the 1st item
-        const insertedUser = records[0];
-        // Extract all the fields *but* password as a new object (user)
-        const { password, ...user } = insertedUser;
-        // Get the host + port (localhost:3000) from the request headers
-        const host = req.get('host');
-        // Compute the full location, e.g. http://localhost:3000/api/users/132
-        // This will help the client know where the new resource can be found!
-        const location = `http://${host}${req.url}/${user.id}`;
-        return res
-          .status(201)
-          .set('Location', location)
-          .json(user);
-      });
-    });
-  },
-);
-
+      );
+    }
+  );
+});
+app.put('/api/user/:id', userValidationMiddlewares, (req, res) => {
+  const idUser = req.params.id;
+  const userUpdated = req.body;
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(422).json({ errors: errors.array() });
+  }
+  return connection.query(
+    'UPDATE user SET ? WHERE id = ?',
+    [userUpdated, idUser],
+    (err, results) => {
+      if (err) {
+        return res.status(500).json({
+          error: err.message,
+          sql: err.sql,
+        });
+      }
+      return connection.query(
+        'SELECT * FROM user WHERE id = ?',
+        idUser,
+        (err2, records) => {
+          if (err2) {
+            return res.status(500).json({
+              error: err2.message,
+              sql: err2.sql,
+            });
+          }
+          const insertedUser = records[0];
+          const { password, ...user } = insertedUser;
+          const host = req.get('host');
+          const location = `http://${host}${req.url}/${user.id}`;
+          return res.status(200).set('Location', location).json(user);
+        }
+      );
+    }
+  );
+});
 app.listen(process.env.PORT, (err) => {
   if (err) {
     throw new Error('Something bad happened...');
